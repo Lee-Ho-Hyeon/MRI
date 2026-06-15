@@ -5,6 +5,7 @@ import os
 import logging
 import matplotlib.pyplot as plt
 import numpy as np
+import scipy.io as sio
 from fastmri_utils import fft2c_new, ifft2c_new
 from statistics import mean, stdev
 from skimage.metrics import peak_signal_noise_ratio, structural_similarity
@@ -369,6 +370,34 @@ def get_mask(img, size, batch_size, type='gaussian2d', acc_factor=8, center_frac
 				# ACS region
 				c_from = size // 2 - Nsamp_center // 2
 				mask[i, :, :, c_from:c_from+Nsamp_center] = 1
+
+	elif type == 'mat':
+		# Load professor's sampling mask from .mat file
+		# Expected path: /home/lee-ho-hyeon/바탕화면/DDIP/kMask12x.mat
+		mask_path = "/home/lee-ho-hyeon/바탕화면/DDIP/kMask12x.mat"
+
+		kMask = sio.loadmat(mask_path)["kMask"]
+
+		# Professor code uses: kMask[..., 0]
+		if kMask.ndim == 3:
+			kMask = kMask[..., 0]
+
+		kMask = kMask.astype(np.float32)
+
+		# Convert to torch
+		mask_2d = torch.from_numpy(kMask).to(img.device)
+
+		# If kMask size is not exactly same as current image size, error
+		if mask_2d.shape[-2] != size or mask_2d.shape[-1] != size:
+			raise ValueError(
+				f"Mask shape {mask_2d.shape} does not match image size {size}x{size}. "
+				"Need resize/padding/crop before using this mask."
+			)
+
+		# img shape: [B, 1, H, W]
+		mask = torch.zeros_like(img)
+		mask[..., :, :] = mask_2d
+		
 	elif type == 'poisson':
 		mask = poisson((size, size), accel=acc_factor).astype(np.complex64)
 		mask = torch.from_numpy(mask)

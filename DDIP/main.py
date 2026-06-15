@@ -34,7 +34,7 @@ def parse_args_and_config():
 
     # MRI task
     parser.add_argument("--deg", type=str, default="MRI")
-    parser.add_argument("--mask_type", type=str, default="uniform1d")
+    parser.add_argument("--mask_type", type=str, default="mat")
     parser.add_argument("--acc_factor", type=int, default=4)
     parser.add_argument("--center_fraction", type=float, default=0.08)
     parser.add_argument("--sigma_y", type=float, default=0.0)
