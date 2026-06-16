@@ -46,27 +46,41 @@ def pred_eps_from_s(s, t, sde):
 	pred_eps = -tmp * s
 	return pred_eps
 
+def inner_c(x, y):
+    """
+    Complex inner product: <x, y> = sum(conj(x) * y)
+    Returns real scalar when x == y.
+    """
+    return torch.sum(torch.conj(x) * y).real
+
 
 def CG(A, b, x, n_inner=5, eps=1e-5):
-	r = b - A(x)
-	p = r
-	rsold = torch.matmul(r.view(1, -1), r.view(1, -1).T)
+    r = b - A(x)
+    p = r.clone()
+    rsold = inner_c(r, r)
 
-	for i in range(n_inner):
-		Ap = A(p)
-		a = rsold / torch.matmul(p.view(1, -1), Ap.view(1, -1).T)
+    for _ in range(n_inner):
+        Ap = A(p)
+        denom = inner_c(p, Ap)
 
-		# x += a * p
-		# r -= a * Ap
-		x = x + a * p
-		r = r - a * Ap
+        if torch.abs(denom) < 1e-12:
+            break
 
-		rsnew = torch.matmul(r.view(1, -1), r.view(1, -1).T)
-		if torch.abs(torch.sqrt(rsnew)) < eps:
-			break
-		p = r + (rsnew / rsold) * p
-		rsold = rsnew
-	return x
+        alpha = rsold / denom
+
+        x = x + alpha * p
+        r = r - alpha * Ap
+
+        rsnew = inner_c(r, r)
+
+        if torch.sqrt(torch.abs(rsnew)) < eps:
+            break
+
+        beta = rsnew / rsold
+        p = r + beta * p
+        rsold = rsnew
+
+    return x
 
 
 def shrink(src, lamb):
@@ -452,41 +466,24 @@ def get_mask(img, size, batch_size,
 
                 mask[i, :, :, c_from:c_from + Nsamp_center] = 1
 
-    elif type == 'mat':
+    elif type == 'equispaced1d':
+        """
+        Deterministic 1D uniform undersampling along the y / phase-encoding direction.
 
-        mask_path = "/home/lee-ho-hyeon/바탕화면/DDIP/kMask12x.mat"
+        This is equivalent to:
+            kMask[:, ::R, :] = 1
 
-        kMask = sio.loadmat(mask_path)["kMask"]
+        where R = acc_factor.
 
-        print("Loaded kMask shape:", kMask.shape)
-
-        # 예: (206,176,32,5)
-        if kMask.ndim == 4:
-            kMask = kMask[:, :, 0, 0]
-        elif kMask.ndim == 3:
-            kMask = kMask[:, :, 0]
-
-        kMask = kMask.astype(np.float32)
-
-        h, w = kMask.shape
-
-        padded = np.zeros(
-            (size, size),
-            dtype=np.float32
-        )
-
-        top = (size - h) // 2
-        left = (size - w) // 2
-
-        padded[top:top+h, left:left+w] = kMask
-
-        mask_2d = torch.from_numpy(
-            padded
-        ).to(img.device)
+        No fully-sampled center region is added.
+        """
 
         mask = torch.zeros_like(img)
 
-        mask[..., :, :] = mask_2d
+        # y-direction / phase-encoding direction
+        # img shape: [B, 1, H, W]
+        # sample every R-th line along W dimension
+        mask[:, :, :, ::acc_factor] = 1
 
     elif type == 'poisson':
 

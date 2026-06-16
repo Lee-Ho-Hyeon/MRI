@@ -3,4 +3,4 @@ python main.py \
 --deg MRI \
 --adaptation \
 --num_refine 3 \
---save_root /home/lee-ho-hyeon/바탕화면/DDIP/results
+--save_root /home/lee-ho-hyeon/문서/GitHub/MRI/DDIP/results

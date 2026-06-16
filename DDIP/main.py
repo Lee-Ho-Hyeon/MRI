@@ -8,7 +8,7 @@ import numpy as np
 import torch
 import yaml
 
-from solver_mri_2d import Diffusion as Diffusion_MRI_2d
+from solver_mri_2d_2 import Diffusion as Diffusion_MRI_2d
 
 
 torch.set_printoptions(sci_mode=False)
@@ -34,13 +34,13 @@ def parse_args_and_config():
 
     # MRI task
     parser.add_argument("--deg", type=str, default="MRI")
-    parser.add_argument("--mask_type", type=str, default="mat")
+    parser.add_argument("--mask_type", type=str, default="equispaced1d")
     parser.add_argument("--acc_factor", type=int, default=4)
-    parser.add_argument("--center_fraction", type=float, default=0.08)
+    parser.add_argument("--center_fraction", type=float, default=0.0)
     parser.add_argument("--sigma_y", type=float, default=0.0)
 
     # diffusion sampling
-    parser.add_argument("--T_sampling", type=int, default=50)
+    parser.add_argument("--T_sampling", type=int, default=100)
     parser.add_argument("--eta", type=float, default=0.85)
     parser.add_argument("--gamma", type=float, default=5.0)
 
@@ -49,12 +49,12 @@ def parse_args_and_config():
     parser.add_argument("--lr", type=float, default=1e-4)
     parser.add_argument("--num_steps", type=int, default=3, help="LoRA optimization steps per diffusion step")
     parser.add_argument("--lora_rank", type=int, default=4)
-    parser.add_argument("--start_t", type=int, default=1000)
+    parser.add_argument("--start_t", type=int, default=600)
     parser.add_argument("--end_t", type=int, default=0)
     parser.add_argument("--adapt_every_k", type=int, default=1)
 
     # proposed iterative self-refinement
-    parser.add_argument("--num_refine", type=int, default=3, help="Number of outer self-refinement iterations")
+    parser.add_argument("--num_refine", type=int, default=2, help="Number of outer self-refinement iterations")
 
     args = parser.parse_args()
 

@@ -1,7 +1,7 @@
 # ood test data
 data:
     dataset: "fastmri_brain"
-    root: '/home/lee-ho-hyeon/바탕화면/DDIP/data/tutorial_brain' 
+    root: /home/lee-ho-hyeon/문서/GitHub/MRI/DDIP/data/tutorial_brain
     vol_name: "vol001"
     image_size: 320
     channels: 1
@@ -42,9 +42,9 @@ time_travel:
     T_sampling: 100
 
 mri:
-    mask_type: uniform1d
+    mask_type: equispaced1d
     acc_factor: 4
-    center_fraction: 0.08
+    center_fraction: 0.0
 
 clip:
     x0t: True
