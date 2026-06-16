@@ -1,0 +1,6 @@
+python main.py \
+--config FASTMRI_BRAIN2BRAIN.yml \
+--deg MRI \
+--adaptation \
+--num_refine 3 \
+--save_root /home/lee-ho-hyeon/바탕화면/DDIP/results

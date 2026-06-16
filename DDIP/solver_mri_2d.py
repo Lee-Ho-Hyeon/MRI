@@ -225,24 +225,19 @@ class Diffusion(object):
                 
             """
             Actual inference running...
-            MoDL-style DDIP self-refinement:
-            - 10b: DDIP/LoRA produces a diffusion prior z_n.
-            - 10a: Explicit CG data-consistency step combines z_n with fixed measured k-space y.
-            - The measured k-space y and ATy are fixed across all refinement iterations.
-            - The next refinement starts from the DC-corrected reconstruction x_{n+1}.
+            Self-refinement version (A-style):
+            - The measured k-space y and ATy are fixed.
+            - The previous reconstruction is used as the initialization of the next refinement round.
+            - Intermediate reconstructions and metrics are saved.
             """
             cnt = 0
             psnr_avg = 0
             ssim_avg = 0
             nrmse_avg = 0
 
+            # If args.num_refine is not defined in main.py, use 3 by default.
             num_refine = getattr(args, "num_refine", 3)
-            dc_cg_iter = getattr(args, "dc_cg_iter", 10)
             all_metrics = {}
-
-            # additional folders for MoDL-style intermediate outputs
-            for t in ["prior", "dc"]:
-                (save_root / t).mkdir(parents=True, exist_ok=True)
 
             for idx in range(x_orig.shape[0]):
                 ATy_idx = ATy[idx:idx+1, ...].to(self.device)
@@ -251,37 +246,34 @@ class Diffusion(object):
                 label_np = np.abs(clear(x_orig[idx]))
                 Acg_idx = functools.partial(Acg, mps=mps_idx, gamma=self.args.gamma)
 
-                # x_n in MoDL. First iteration starts from random noise, then uses DC-corrected x_{n+1}.
-                cur_recon = None
+                prev_recon = None
                 refine_metrics = []
 
                 for refine_idx in range(num_refine):
-                    print(f"\n===== Slice {idx} / MoDL-style Refinement {refine_idx + 1}/{num_refine} =====")
+                    print(f"\n===== Slice {idx} / Refinement {refine_idx + 1}/{num_refine} =====")
 
-                    if cur_recon is None:
+                    if prev_recon is None:
                         x = torch.randn_like(x_orig[idx:idx+1, ...]).to(self.device)
                     else:
-                        x = cur_recon.detach().to(self.device)
+                        x = prev_recon.detach().to(self.device)
 
                     skip = config.diffusion.num_diffusion_timesteps // args.T_sampling
                     n = x.size(0)
-                    xs = [x]
                     x0_preds = []
+                    xs = [x]
 
+                    # Generate time schedule for each refinement round.
                     times = range(0, 1000, skip)
                     times_next = [-1] + list(times[:-1])
                     times_pair = zip(reversed(times), reversed(times_next))
 
                     adapt_losses = []
 
-                    # ------------------------------------------------------------
-                    # 10b-like step: DDIP / LoRA denoising prior generation
-                    # Produces z_n, but does not stop there.
-                    # ------------------------------------------------------------
+                    # Reverse diffusion sampling
                     for i, j in tqdm.tqdm(
                         times_pair,
                         total=len(times),
-                        desc=f"slice {idx}, refine {refine_idx} - DDIP prior"
+                        desc=f"slice {idx}, refine {refine_idx}"
                     ):
                         t = (torch.ones(n) * i).to("cuda")
                         next_t = (torch.ones(n) * j).to("cuda")
@@ -289,9 +281,9 @@ class Diffusion(object):
                         at = compute_alpha(self.betas, t.long())
                         at_next = compute_alpha(self.betas, next_t.long())
 
-                        # LoRA test-time adaptation.
-                        # The denoiser input is image-domain xt, but the current adaptation loss
-                        # still uses k-space consistency: adapt_loss_fn(A(x0_t), y).
+                        """
+                        Block 1: LoRA adaptation
+                        """
                         if args.adaptation:
                             xt = xs[-1].to("cuda")
                             xt = comp_to_nchw_real(xt)
@@ -308,9 +300,9 @@ class Diffusion(object):
                                 x0_t = (xt - et * (1 - at).sqrt()) / at.sqrt()
                                 x0_t = real_to_nchw_comp(x0_t)
 
-                                # Light inner DC used only to stabilize adaptation.
-                                bcg_adapt = x0_t + self.args.gamma * ATy_idx
-                                x0_t = CG(Acg_idx, bcg_adapt, x0_t, n_inner=1)
+                                # Data consistency with fixed measured k-space y.
+                                bcg = x0_t + self.args.gamma * ATy_idx
+                                x0_t = CG(Acg_idx, bcg, x0_t, n_inner=1)
 
                                 loss = adapt_loss_fn(A(x0_t, mps_idx), y_idx)
                                 loss.backward()
@@ -318,25 +310,28 @@ class Diffusion(object):
 
                                 adapt_losses.append(float(loss.detach().cpu()))
 
-                        # Inference after adaptation.
+                        """
+                        Block 2: Inference after adaptation
+                        """
                         with torch.no_grad():
                             xt = xs[-1].to("cuda")
                             xt = comp_to_nchw_real(xt)
 
                             et = model(xt, t)[:, :2]
 
-                            # Tweedie estimate: image-domain estimate from diffusion model.
+                            # 1. Tweedie estimate
                             x0_t = (xt - et * (1 - at).sqrt()) / at.sqrt()
                             x0_t = real_to_nchw_comp(x0_t)
 
-                            # Keep the original DDIP inner DC step. This stabilizes each diffusion step.
-                            bcg_inner = x0_t + self.args.gamma * ATy_idx
-                            x0_t = CG(Acg_idx, bcg_inner, x0_t, n_inner=5)
+                            # 2. Data consistency with fixed measured k-space y.
+                            bcg = x0_t + self.args.gamma * ATy_idx
+                            x0_t = CG(Acg_idx, bcg, x0_t, n_inner=5)
 
                             eta = self.args.eta
                             c1 = (1 - at_next).sqrt() * eta
                             c2 = (1 - at_next).sqrt() * ((1 - eta ** 2) ** 0.5)
 
+                            # DDIM sampling
                             if j != 0:
                                 et = real_to_nchw_comp(et)
                                 xt_next = at_next.sqrt() * x0_t + c1 * torch.randn_like(x0_t) + c2 * et
@@ -346,23 +341,9 @@ class Diffusion(object):
                             x0_preds.append(x0_t.to("cpu"))
                             xs.append(xt_next.to("cpu"))
 
-                    # z_n: DDIP denoiser/prior output of this refinement.
-                    prior_img = xs[-1].to(self.device)
-                    prior_np = np.abs(clear(prior_img))
-
-                    # ------------------------------------------------------------
-                    # 10a-like step: explicit MoDL/SENSE-style data consistency.
-                    # x_{n+1} = argmin_x gamma*||A(x)-y||^2 + ||x-z_n||^2
-                    # Equivalent normal equation in code:
-                    #     (I + gamma A^H A)x = z_n + gamma A^H y
-                    # ------------------------------------------------------------
-                    with torch.no_grad():
-                        bcg_dc = prior_img + self.args.gamma * ATy_idx
-                        dc_recon = CG(Acg_idx, bcg_dc, prior_img, n_inner=dc_cg_iter)
-
-                    # Use DC-corrected reconstruction as x_{n+1} for the next refinement.
-                    cur_recon = dc_recon.detach()
-                    recon_np = np.abs(clear(cur_recon))
+                    # Current refinement result
+                    prev_recon = xs[-1].to(self.device)
+                    recon_np = np.abs(clear(prev_recon))
 
                     psnr = PSNR(recon_np, label_np)
                     ssim = SSIM(recon_np, label_np, data_range=label_np.max())
@@ -386,20 +367,21 @@ class Diffusion(object):
                         f"adapt_loss_mean={avg_adapt_loss}"
                     )
 
-                    # Save DDIP prior z_n and DC-corrected x_{n+1} separately.
-                    fname = f"{str(idx).zfill(3)}_refine_{str(refine_idx).zfill(2)}"
-                    plt.imsave(str(save_root / "prior" / f"{fname}.png"), prior_np, cmap="gray")
-                    np.save(str(save_root / "prior" / f"{fname}.npy"), prior_img.detach().cpu().numpy())
+                    # Save intermediate reconstruction image
+                    plt.imsave(
+                        str(save_root / "progress" / f"{str(idx).zfill(3)}_refine_{str(refine_idx).zfill(2)}.png"),
+                        recon_np,
+                        cmap="gray"
+                    )
 
-                    plt.imsave(str(save_root / "dc" / f"{fname}.png"), recon_np, cmap="gray")
-                    np.save(str(save_root / "dc" / f"{fname}.npy"), cur_recon.detach().cpu().numpy())
-
-                    # Keep progress folder as the main visual history of final DC-corrected outputs.
-                    plt.imsave(str(save_root / "progress" / f"{fname}.png"), recon_np, cmap="gray")
-                    np.save(str(save_root / "progress" / f"{fname}.npy"), cur_recon.detach().cpu().numpy())
+                    # Save intermediate reconstruction array
+                    np.save(
+                        str(save_root / "progress" / f"{str(idx).zfill(3)}_refine_{str(refine_idx).zfill(2)}.npy"),
+                        prev_recon.detach().cpu().numpy()
+                    )
 
                 # Final reconstruction for this slice
-                final_recon = np.abs(clear(cur_recon))
+                final_recon = np.abs(clear(prev_recon))
                 final_psnr = PSNR(final_recon, label_np)
                 final_ssim = SSIM(final_recon, label_np, data_range=label_np.max())
                 final_nrmse = NRMSE(final_recon, label_np)
@@ -409,7 +391,12 @@ class Diffusion(object):
                 nrmse_avg += final_nrmse
                 cnt += 1
 
-                plt.imsave(str(save_root / "recon" / f"{str(idx).zfill(3)}.png"), final_recon, cmap="gray")
+                plt.imsave(
+                    str(save_root / "recon" / f"{str(idx).zfill(3)}.png"),
+                    final_recon,
+                    cmap="gray"
+                )
+
                 all_metrics[f"slice_{str(idx).zfill(3)}"] = refine_metrics
 
             psnr_avg /= cnt
@@ -423,12 +410,6 @@ class Diffusion(object):
                 "NRMSE": float(nrmse_avg),
             }
             summary["progress"] = all_metrics
-            summary["method"] = {
-                "name": "MoDL-style DDIP self-refinement",
-                "description": "Each refinement alternates DDIP/LoRA prior generation (10b-like) and explicit CG data consistency (10a-like).",
-                "dc_cg_iter": int(dc_cg_iter),
-                "gamma": float(self.args.gamma),
-            }
 
             with open(str(save_root / "summary.json"), "w") as f:
                 json.dump(summary, f, indent=2)
@@ -441,3 +422,4 @@ def compute_alpha(beta, t):
     beta = torch.cat([torch.zeros(1).to(beta.device), beta], dim=0)
     a = (1 - beta).cumprod(dim=0).index_select(0, t + 1).view(-1, 1, 1, 1)
     return a
+

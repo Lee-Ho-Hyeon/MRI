@@ -16,6 +16,7 @@ from guided_diffusion.unet import OpenAiUNetModel
 from guided_diffusion.ema import ExponentialMovingAverage
 from guided_diffusion.sde import DDPM
 import functools
+import scipy.io as sio
 
 
 def get_sigma(t, sde):
@@ -292,120 +293,217 @@ def show_samples_gray(x, size=32, save=False, save_fname=None):
 		plt.imsave(save_fname, img, cmap='gray')
 
 
-def get_mask(img, size, batch_size, type='gaussian2d', acc_factor=8, center_fraction=0.04, fix=False):
-	mux_in = size ** 2
-	if type.endswith('2d'):
-		Nsamp = mux_in // acc_factor
-	elif type.endswith('1d'):
-		Nsamp = size // acc_factor
-	if type == 'gaussian2d':
-		mask = torch.zeros_like(img)
-		cov_factor = size * (1.5 / 128)
-		mean = [size // 2, size // 2]
-		cov = [[size * cov_factor, 0], [0, size * cov_factor]]
-		if fix:
-			samples = np.random.multivariate_normal(mean, cov, int(Nsamp))
-			int_samples = samples.astype(int)
-			int_samples = np.clip(int_samples, 0, size - 1)
-			mask[..., int_samples[:, 0], int_samples[:, 1]] = 1
-		else:
-			for i in range(batch_size):
-				# sample different masks for batch
-				samples = np.random.multivariate_normal(mean, cov, int(Nsamp))
-				int_samples = samples.astype(int)
-				int_samples = np.clip(int_samples, 0, size - 1)
-				mask[i, :, int_samples[:, 0], int_samples[:, 1]] = 1
-	elif type == 'uniformrandom2d':
-		mask = torch.zeros_like(img)
-		if fix:
-			mask_vec = torch.zeros([1, size * size])
-			samples = np.random.choice(size * size, int(Nsamp))
-			mask_vec[:, samples] = 1
-			mask_b = mask_vec.view(size, size)
-			mask[:, ...] = mask_b
-		else:
-			for i in range(batch_size):
-				# sample different masks for batch
-				mask_vec = torch.zeros([1, size * size])
-				samples = np.random.choice(size * size, int(Nsamp))
-				mask_vec[:, samples] = 1
-				mask_b = mask_vec.view(size, size)
-				mask[i, ...] = mask_b
-	elif type == 'gaussian1d':
-		mask = torch.zeros_like(img)
-		mean = size // 2
-		std = size * (15.0 / 128)
-		Nsamp_center = int(size * center_fraction)
-		if fix:
-			samples = np.random.normal(
-				loc=mean, scale=std, size=int(Nsamp * 1.2))
-			int_samples = samples.astype(int)
-			int_samples = np.clip(int_samples, 0, size - 1)
-			mask[..., int_samples] = 1
-			c_from = size // 2 - Nsamp_center // 2
-			mask[..., c_from:c_from + Nsamp_center] = 1
-		else:
-			for i in range(batch_size):
-				samples = np.random.normal(
-					loc=mean, scale=std, size=int(Nsamp*1.2))
-				int_samples = samples.astype(int)
-				int_samples = np.clip(int_samples, 0, size - 1)
-				mask[i, :, :, int_samples] = 1
-				c_from = size // 2 - Nsamp_center // 2
-				mask[i, :, :, c_from:c_from + Nsamp_center] = 1
-	elif type == 'uniform1d':
-		mask = torch.zeros_like(img)
-		if fix:
-			Nsamp_center = int(size * center_fraction)
-			samples = np.random.choice(size, int(Nsamp - Nsamp_center))
-			mask[..., samples] = 1
-			# ACS region
-			c_from = size // 2 - Nsamp_center // 2
-			mask[..., c_from:c_from + Nsamp_center] = 1
-		else:
-			for i in range(batch_size):
-				Nsamp_center = int(size * center_fraction)
-				samples = np.random.choice(size, int(Nsamp - Nsamp_center))
-				mask[i, :, :, samples] = 1
-				# ACS region
-				c_from = size // 2 - Nsamp_center // 2
-				mask[i, :, :, c_from:c_from+Nsamp_center] = 1
+def get_mask(img, size, batch_size,
+             type='gaussian2d',
+             acc_factor=8,
+             center_fraction=0.04,
+             fix=False):
 
-	elif type == 'mat':
-		# Load professor's sampling mask from .mat file
-		# Expected path: /home/lee-ho-hyeon/바탕화면/DDIP/kMask12x.mat
-		mask_path = "/home/lee-ho-hyeon/바탕화면/DDIP/kMask12x.mat"
+    mux_in = size ** 2
 
-		kMask = sio.loadmat(mask_path)["kMask"]
+    if type.endswith('2d'):
+        Nsamp = mux_in // acc_factor
+    elif type.endswith('1d'):
+        Nsamp = size // acc_factor
 
-		# Professor code uses: kMask[..., 0]
-		if kMask.ndim == 3:
-			kMask = kMask[..., 0]
+    if type == 'gaussian2d':
 
-		kMask = kMask.astype(np.float32)
+        mask = torch.zeros_like(img)
 
-		# Convert to torch
-		mask_2d = torch.from_numpy(kMask).to(img.device)
+        cov_factor = size * (1.5 / 128)
+        mean = [size // 2, size // 2]
+        cov = [[size * cov_factor, 0],
+               [0, size * cov_factor]]
 
-		# If kMask size is not exactly same as current image size, error
-		if mask_2d.shape[-2] != size or mask_2d.shape[-1] != size:
-			raise ValueError(
-				f"Mask shape {mask_2d.shape} does not match image size {size}x{size}. "
-				"Need resize/padding/crop before using this mask."
-			)
+        if fix:
+            samples = np.random.multivariate_normal(
+                mean, cov, int(Nsamp)
+            )
 
-		# img shape: [B, 1, H, W]
-		mask = torch.zeros_like(img)
-		mask[..., :, :] = mask_2d
-		
-	elif type == 'poisson':
-		mask = poisson((size, size), accel=acc_factor).astype(np.complex64)
-		mask = torch.from_numpy(mask)
-	else:
-		NotImplementedError(f'Mask type {type} is currently not supported.')
+            int_samples = samples.astype(int)
+            int_samples = np.clip(int_samples, 0, size - 1)
 
-	return mask
+            mask[..., int_samples[:, 0], int_samples[:, 1]] = 1
 
+        else:
+            for i in range(batch_size):
+                samples = np.random.multivariate_normal(
+                    mean, cov, int(Nsamp)
+                )
+
+                int_samples = samples.astype(int)
+                int_samples = np.clip(int_samples, 0, size - 1)
+
+                mask[i, :, int_samples[:, 0], int_samples[:, 1]] = 1
+
+    elif type == 'uniformrandom2d':
+
+        mask = torch.zeros_like(img)
+
+        if fix:
+
+            mask_vec = torch.zeros([1, size * size])
+
+            samples = np.random.choice(
+                size * size,
+                int(Nsamp)
+            )
+
+            mask_vec[:, samples] = 1
+
+            mask_b = mask_vec.view(size, size)
+
+            mask[:, ...] = mask_b
+
+        else:
+
+            for i in range(batch_size):
+
+                mask_vec = torch.zeros([1, size * size])
+
+                samples = np.random.choice(
+                    size * size,
+                    int(Nsamp)
+                )
+
+                mask_vec[:, samples] = 1
+
+                mask_b = mask_vec.view(size, size)
+
+                mask[i, ...] = mask_b
+
+    elif type == 'gaussian1d':
+
+        mask = torch.zeros_like(img)
+
+        mean = size // 2
+        std = size * (15.0 / 128)
+
+        Nsamp_center = int(size * center_fraction)
+
+        if fix:
+
+            samples = np.random.normal(
+                loc=mean,
+                scale=std,
+                size=int(Nsamp * 1.2)
+            )
+
+            int_samples = samples.astype(int)
+            int_samples = np.clip(int_samples, 0, size - 1)
+
+            mask[..., int_samples] = 1
+
+            c_from = size // 2 - Nsamp_center // 2
+            mask[..., c_from:c_from + Nsamp_center] = 1
+
+        else:
+
+            for i in range(batch_size):
+
+                samples = np.random.normal(
+                    loc=mean,
+                    scale=std,
+                    size=int(Nsamp * 1.2)
+                )
+
+                int_samples = samples.astype(int)
+                int_samples = np.clip(int_samples, 0, size - 1)
+
+                mask[i, :, :, int_samples] = 1
+
+                c_from = size // 2 - Nsamp_center // 2
+
+                mask[i, :, :, c_from:c_from + Nsamp_center] = 1
+
+    elif type == 'uniform1d':
+
+        mask = torch.zeros_like(img)
+
+        if fix:
+
+            Nsamp_center = int(size * center_fraction)
+
+            samples = np.random.choice(
+                size,
+                int(Nsamp - Nsamp_center)
+            )
+
+            mask[..., samples] = 1
+
+            c_from = size // 2 - Nsamp_center // 2
+
+            mask[..., c_from:c_from + Nsamp_center] = 1
+
+        else:
+
+            for i in range(batch_size):
+
+                Nsamp_center = int(size * center_fraction)
+
+                samples = np.random.choice(
+                    size,
+                    int(Nsamp - Nsamp_center)
+                )
+
+                mask[i, :, :, samples] = 1
+
+                c_from = size // 2 - Nsamp_center // 2
+
+                mask[i, :, :, c_from:c_from + Nsamp_center] = 1
+
+    elif type == 'mat':
+
+        mask_path = "/home/lee-ho-hyeon/바탕화면/DDIP/kMask12x.mat"
+
+        kMask = sio.loadmat(mask_path)["kMask"]
+
+        print("Loaded kMask shape:", kMask.shape)
+
+        # 예: (206,176,32,5)
+        if kMask.ndim == 4:
+            kMask = kMask[:, :, 0, 0]
+        elif kMask.ndim == 3:
+            kMask = kMask[:, :, 0]
+
+        kMask = kMask.astype(np.float32)
+
+        h, w = kMask.shape
+
+        padded = np.zeros(
+            (size, size),
+            dtype=np.float32
+        )
+
+        top = (size - h) // 2
+        left = (size - w) // 2
+
+        padded[top:top+h, left:left+w] = kMask
+
+        mask_2d = torch.from_numpy(
+            padded
+        ).to(img.device)
+
+        mask = torch.zeros_like(img)
+
+        mask[..., :, :] = mask_2d
+
+    elif type == 'poisson':
+
+        mask = poisson(
+            (size, size),
+            accel=acc_factor
+        ).astype(np.complex64)
+
+        mask = torch.from_numpy(mask)
+
+    else:
+
+        raise NotImplementedError(
+            f"Mask type {type} is currently not supported."
+        )
+
+    return mask
 
 def kspace_to_nchw(tensor):
 	"""
