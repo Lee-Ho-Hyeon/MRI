@@ -1,0 +1,26 @@
+{
+  "results": {
+    "PSNR": 43.010414123535156,
+    "SSIM": 0.9690032121647263,
+    "NRMSE": 0.05574893206357956
+  },
+  "support_mask": {
+    "source": "A^H y / ATy_idx",
+    "threshold_ratio": 0.05,
+    "dilation_iters": 6,
+    "applied_during_sampling": true,
+    "note": "This is an image-domain support mask, not the k-space undersampling mask."
+  },
+  "progress": {
+    "slice_000": [
+      {
+        "refine_idx": 0,
+        "PSNR": 43.010414123535156,
+        "SSIM": 0.9690032121647263,
+        "NRMSE": 0.05574893206357956,
+        "adapt_loss_mean": 0.15119462541746334,
+        "adapt_loss_last": 1.2280404916964471e-05
+      }
+    ]
+  }
+}

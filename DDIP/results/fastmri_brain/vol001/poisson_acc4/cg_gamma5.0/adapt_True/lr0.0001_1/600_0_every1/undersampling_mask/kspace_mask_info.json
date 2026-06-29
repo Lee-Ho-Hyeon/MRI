@@ -1,0 +1,14 @@
+{
+  "mask_type": "poisson",
+  "acc_factor_arg": 4,
+  "center_fraction": 0.0,
+  "mask_shape": [
+    320,
+    320
+  ],
+  "sampled_points": 25116,
+  "total_points": 102400,
+  "actual_sample_ratio": 0.2452734375,
+  "actual_acceleration": 4.077082337951904,
+  "note": "This is the k-space undersampling mask used inside A/A^H. It is not the image-domain support mask used for background suppression."
+}

@@ -1,6 +1,7 @@
 python main.py \
 --config FASTMRI_BRAIN2BRAIN.yml \
 --deg MRI \
+--acc_factor 4 \
 --adaptation \
---num_refine 3 \
+--mask_type poisson \
 --save_root /home/lee-ho-hyeon/문서/GitHub/MRI/DDIP/results

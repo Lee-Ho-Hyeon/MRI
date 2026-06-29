@@ -1,0 +1,14 @@
+{
+  "mask_type": "gaussian1d",
+  "acc_factor_arg": 4,
+  "center_fraction": 0.0,
+  "mask_shape": [
+    320,
+    320
+  ],
+  "sampled_points": 22720,
+  "total_points": 102400,
+  "actual_sample_ratio": 0.221875,
+  "actual_acceleration": 4.507042253521127,
+  "note": "This is the k-space undersampling mask used inside A/A^H. It is not the image-domain support mask used for background suppression."
+}

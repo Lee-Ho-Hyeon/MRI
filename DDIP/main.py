@@ -8,7 +8,7 @@ import numpy as np
 import torch
 import yaml
 
-from solver_mri_2d_2 import Diffusion as Diffusion_MRI_2d
+from solver_mri_2d_6 import Diffusion as Diffusion_MRI_2d
 
 
 torch.set_printoptions(sci_mode=False)
@@ -28,7 +28,7 @@ def parse_args_and_config():
 
     # config / runtime
     parser.add_argument("--config", type=str, required=True, help="Config file name under configs/vp or absolute path")
-    parser.add_argument("--seed", type=int, default=1234)
+    parser.add_argument("--seed", type=int, default=12347)
     parser.add_argument("--verbose", type=str, default="info", choices=["debug", "info", "warning", "critical"])
     parser.add_argument("--save_root", type=str, default="./results")
 
@@ -47,14 +47,14 @@ def parse_args_and_config():
     # LoRA test-time adaptation
     parser.add_argument("--adaptation", action="store_true")
     parser.add_argument("--lr", type=float, default=1e-4)
-    parser.add_argument("--num_steps", type=int, default=3, help="LoRA optimization steps per diffusion step")
+    parser.add_argument("--num_steps", type=int, default=1, help="LoRA optimization steps per diffusion step")
     parser.add_argument("--lora_rank", type=int, default=4)
     parser.add_argument("--start_t", type=int, default=600)
     parser.add_argument("--end_t", type=int, default=0)
     parser.add_argument("--adapt_every_k", type=int, default=1)
 
     # proposed iterative self-refinement
-    parser.add_argument("--num_refine", type=int, default=2, help="Number of outer self-refinement iterations")
+    parser.add_argument("--num_refine", type=int, default=1, help="Number of outer self-refinement iterations")
 
     args = parser.parse_args()
 
